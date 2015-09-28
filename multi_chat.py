@@ -1,6 +1,7 @@
 # coding=utf-8
 import asyncio
 import json
+import logging
 import socket
 from typing import Union, Set, List, Dict, Tuple
 
@@ -14,19 +15,18 @@ welcome_message = "Expected format: utf-8_encoding( json_encoding( [List_of_chan
 class Chat:
     def __init__(self):
         self.channels = {"global": set()}  # type: Dict[str: Set["ChatProtocol"]]
+        self.queue = asyncio.Queue()
 
-    def register(self, instance: "ChatProtocol"):
-        self.subscribe(instance, "global")
-        instance.send_raw("Hello {}\n{}".format(instance.peername, welcome_message))
+    async def run(self):
+        """
+        While running the chat will continuously retrieve (instance, message) tuples from the queue and process them.
+        """
+        logging.info("Chat startup")
+        while True:
+            (instance, message) = await self.queue.get()
+            await self.handle_message(instance, message)
 
-    def deregister(self, instance: "ChatProtocol"):
-        for channel_user_list in self.channels.values():
-            try:
-                channel_user_list.remove(instance)
-            except KeyError:
-                pass
-
-    def pass_message(self, instance: "ChatProtocol", message: Tuple[List[str], str]):
+    async def handle_message(self, instance: "ChatProtocol", message: Tuple[List[str], str]):
         if message[1].startswith("%"):
             self.handle_command(instance, message[1])
             return
@@ -36,28 +36,67 @@ class Chat:
                     subscriber.send_message(channel, instance.peername, message[1])
         pass
 
+    async def add_message(self, instance, message):
+        """
+        Adds a message from instance to the queue.
+        """
+        await self.queue.put((instance, message))
+
+    def register(self, instance: "ChatProtocol"):
+        """
+        Registers an instance to the chat. Implicates a mandatory subscription to channel "global".
+        """
+        self.subscribe(instance, "global")
+        instance.send_raw("Hello {}\n{}".format(instance.peername, welcome_message))
+        logging.info("Registered {} to chat".format(instance.peername))
+
+    def deregister(self, instance: "ChatProtocol"):
+        """
+        Deregisters an instance from chat and all channels. No more messages from that instance will get processed,
+        until register() is called again. The TCP connection is left intact.
+        """
+        for channel_user_list in self.channels.values():
+            try:
+                channel_user_list.remove(instance)
+            except KeyError:
+                pass
+        logging.info("Deregistered {} from chat".format(instance.peername))
+
     def handle_command(self, instance: "ChatProtocol", command: str):
         # TODO: stuff like %join, %leave, %quit, %kick, %name
         raise NotImplementedError
 
     def subscribe(self, instance: "ChatProtocol", channel: str):
+        """
+        Subscribes an instance to a channel. This instance will receive all messages from that channel.
+        """
         try:
             self.channels[channel].add(instance)
         except KeyError:
             pass
 
     def unsubscribe(self, instance: "ChatProtocol", channel: str):
+        """
+        Unsubscribes an instance from a channel. This instance will receive no more messages from that channel.
+        """
         try:
             self.channels[channel].remove(instance)
         except KeyError:
             pass
 
     def kick(self, instance: "ChatProtocol"):
+        """
+        Similar to deregister() except that the TCP connection gets closed.
+        """
         instance.send_raw("Git gud!")
         self.deregister(instance)
         instance.disconnect()
 
     def shutdown(self):
+        """
+        Shuts the chat down. Every connection will get disconnected. All channels flushed.
+        """
+        logging.warning("Chat shutdown")
         for subscriber in self.channels["global"]:
             subscriber.disconnect()
         for channel in self.channels.values():
@@ -73,14 +112,12 @@ class ChatProtocol(asyncio.Protocol):
     def connection_made(self, transport: Union[asyncio.BaseTransport, asyncio.ReadTransport, asyncio.WriteTransport]):
         self.transport = transport
         self.peername = str(transport.get_extra_info("peername"))
-        print("Got connection from", self.peername)
+        logging.info("Got connection from {}".format(self.peername))
         self.chat.register(self)
-        print("Registered {} to chat".format(self.peername))
 
     def connection_lost(self, exc):
-        print("Lost connection to", self.peername)
+        logging.info("Lost connection to {}".format(self.peername))
         self.chat.deregister(self)
-        print("Deregistered {} from chat".format(self.peername))
         self.transport.close()
 
     def data_received(self, data):
@@ -88,24 +125,25 @@ class ChatProtocol(asyncio.Protocol):
         # Example: b'[["global", "foo"], "Hello, world\\nMultiline!"]\n'
         # Meaning: Send "Hello, world\nMultiline!" to channel "global" and "foo", sender gets identified by his socket
         # TODO: Assumes only complete and well-formatted transmissions for now
-        print("Got raw data {!r} from {}".format(data, self.peername))
+        logging.info("Got raw data {!r} from {}".format(data, self.peername))
         try:
             message = json.loads(data.decode())
-            self.chat.pass_message(self, message)
+            asyncio.ensure_future(self.chat.add_message(self, message))
         except json.JSONDecodeError as e:
-            print(e)
+            logging.warning("{}: JSONDecodeError: {}".format(self.peername, e))
             pass
 
     def send_message(self, channel: str, peername: str, message: str):
-        formatted = "[{}]{}: {}".format(channel, peername, message)
+        formatted = "[{}]{}: {}\n".format(channel, peername, message)
+        logging.info("Send message {!r} to {}".format(formatted, self.peername))
         self.transport.write(formatted.encode())
 
     def send_raw(self, message):
-        print("Send message {!r} to {}".format(message, self.peername))
+        logging.info("Send raw message {!r} to {}".format(message, self.peername))
         self.transport.write(message.encode())
 
     def disconnect(self):
-        print("Disconnecting {}".format(self.peername))
+        logging.info("Disconnecting {}".format(self.peername))
         self.transport.close()
 
 
@@ -116,14 +154,18 @@ if __name__ == '__main__':
     host = sys.argv[1]
     port = int(sys.argv[2])
 
+    logging.basicConfig(format='%(asctime)s %(message)s', level=logging.DEBUG)
+
     loop = asyncio.get_event_loop()
     loop.set_debug(True)
 
     mychat = Chat()
+    asyncio.ensure_future(mychat.run())
+
     coro = loop.create_server(lambda: ChatProtocol(mychat), host, port, family=socket.AF_INET, reuse_address=True)
     server = loop.run_until_complete(coro)
 
-    print('Serving on {}'.format(server.sockets[0].getsockname()))
+    logging.info('Serving on {}'.format(server.sockets[0].getsockname()))
     try:
         loop.run_forever()
     except KeyboardInterrupt:

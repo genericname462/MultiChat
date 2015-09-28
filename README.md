@@ -17,5 +17,5 @@ Example:
 ##### Server to client:
 For debugging reasons it's a simple utf-8 string at the moment but reusing the upper format should be easy.
 ```python
-b'[channel]peername: message'
+b'[channel]peername: message\n'
 ```
