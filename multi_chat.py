@@ -4,6 +4,7 @@ import json
 import socket
 from typing import Union, Set, List, Dict, Tuple
 
+import sys
 
 welcome_message = "Expected format: utf-8_encoding( json_encoding( [List_of_channels, message] ) + \"\\n\" )\n" + \
     "Example: b\'[[\"global\", \"foo\"], \"Hello, world\\\\nMultiline!\"]\\n\'\n" + \
@@ -109,13 +110,17 @@ class ChatProtocol(asyncio.Protocol):
 
 
 if __name__ == '__main__':
+    if len(sys.argv) < 3:
+        print("{} {} {}".format(sys.argv[0], "ip", "port"))
+        sys.exit()
+    host = sys.argv[1]
+    port = int(sys.argv[2])
+
     loop = asyncio.get_event_loop()
     loop.set_debug(True)
 
-    host = socket.gethostbyname(socket.gethostname())
-    port = 3030
     mychat = Chat()
-    coro = loop.create_server(lambda: ChatProtocol(mychat), "127.0.0.1", port, family=socket.AF_INET, reuse_address=True)
+    coro = loop.create_server(lambda: ChatProtocol(mychat), host, port, family=socket.AF_INET, reuse_address=True)
     server = loop.run_until_complete(coro)
 
     print('Serving on {}'.format(server.sockets[0].getsockname()))
