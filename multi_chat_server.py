@@ -36,7 +36,7 @@ class Chat:
                     subscriber.send_message(channel, instance.peername, message[1])
         pass
 
-    async def add_message(self, instance, message):
+    async def add_message(self, instance: "ChatProtocol", message: Tuple[List[str], str]):
         """
         Adds a message from instance to the queue.
         """
