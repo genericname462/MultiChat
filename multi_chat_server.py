@@ -3,18 +3,18 @@ import asyncio
 import json
 import logging
 import socket
-from typing import Union, Set, List, Dict, Tuple
-
+from typing import Union, Set, List, Dict, Tuple, ByteString
 import sys
 
 welcome_message = "Expected format: utf-8_encoding( json_encoding( [List_of_channels, message] ) + \"\\n\" )\n" + \
     "Example: b\'[[\"global\", \"foo\"], \"Hello, world\\\\nMultiline!\"]\\n\'\n" + \
-    "Active channel for now: \"global\"\n"
+    "Active channel for now: {}\n" + \
+    "Available commands: {}\n"
 
 
 class Chat:
     def __init__(self):
-        self.channels = {"global": set()}  # type: Dict[str: Set["ChatProtocol"]]
+        self.channels = {"global": set(), "test": set()}  # type: Dict[str: Set["ChatProtocol"]]
         self.queue = asyncio.Queue()
 
     async def run(self):
@@ -46,8 +46,11 @@ class Chat:
         """
         Registers an instance to the chat. Implicates a mandatory subscription to channel "global".
         """
-        self.subscribe(instance, "global")
-        instance.send_raw("Hello {}\n{}".format(instance.peername, welcome_message))
+        self.subscribe(instance, ["global"])
+        instance.send_raw("Hello {}\n{}".format(
+            instance.peername,
+            welcome_message.format(self.channels.keys(), ["%name", "%join", "%leave"]))
+        )
         logging.info("Registered {} to chat".format(instance.peername))
 
     def deregister(self, instance: "ChatServerProtocol"):
@@ -63,26 +66,39 @@ class Chat:
         logging.info("Deregistered {} from chat".format(instance.peername))
 
     def handle_command(self, instance: "ChatServerProtocol", command: str):
-        # TODO: stuff like %join, %leave, %quit, %kick, %name
-        raise NotImplementedError
-
-    def subscribe(self, instance: "ChatServerProtocol", channel: str):
-        """
-        Subscribes an instance to a channel. This instance will receive all messages from that channel.
-        """
+        # TODO: stuff like %quit, %kick, ...
+        commands = {
+            "%name": lambda x: instance.set_name(x),
+            "%join": lambda x: self.subscribe(instance, x.split()),
+            "%leave": lambda x: self.unsubscribe(instance, x.split())
+        }
         try:
-            self.channels[channel].add(instance)
-        except KeyError:
-            pass
+            op_code, sep, parameter = command.partition(" ")
+            commands[op_code](parameter)
+            logging.info("Executed command {} from {}".format((op_code, parameter), instance.peername))
+        except (KeyError, TypeError):
+            raise NotImplementedError
 
-    def unsubscribe(self, instance: "ChatServerProtocol", channel: str):
+    def subscribe(self, instance: "ChatServerProtocol", channel_list: List[str]):
         """
-        Unsubscribes an instance from a channel. This instance will receive no more messages from that channel.
+        Subscribes an instance to a list of channels. This instance will receive all messages from these channels.
         """
-        try:
-            self.channels[channel].remove(instance)
-        except KeyError:
-            pass
+        for channel in channel_list:
+            try:
+                self.channels[channel].add(instance)
+                logging.debug("{} joined channel {}".format(instance.peername, channel))
+            except KeyError:
+                pass
+
+    def unsubscribe(self, instance: "ChatServerProtocol", channel_list: List[str]):
+        """
+        Unsubscribes an instance from a list of channels. This instance will receive no more messages from these channels.
+        """
+        for channel in channel_list:
+            try:
+                self.channels[channel].remove(instance)
+            except KeyError:
+                pass
 
     def kick(self, instance: "ChatServerProtocol"):
         """
@@ -108,6 +124,7 @@ class ChatServerProtocol(asyncio.Protocol):
         self.chat = chat
         self.transport = ...  # type: Union[asyncio.BaseTransport, asyncio.ReadTransport, asyncio.WriteTransport]
         self.peername = ...
+        self.buffer = bytearray()
 
     def connection_made(self, transport: Union[asyncio.BaseTransport, asyncio.ReadTransport, asyncio.WriteTransport]):
         self.transport = transport
@@ -120,18 +137,26 @@ class ChatServerProtocol(asyncio.Protocol):
         self.chat.deregister(self)
         self.transport.close()
 
-    def data_received(self, data):
+    def data_received(self, data: ByteString):
         # Expected format: utf-8( json( [List_of_channels, message] ) + "\n" )
         # Example: b'[["global", "foo"], "Hello, world\\nMultiline!"]\n'
-        # Meaning: Send "Hello, world\nMultiline!" to channel "global" and "foo", sender gets identified by his socket
-        # TODO: Assumes only complete and well-formatted transmissions for now
+        # Meaning: Send "Hello, world\nMultiline!" to channel "global" and "foo", sender gets identified by his socket.
+        # The incoming stream will get split at the first occurrence of a "\n" and a decoding attempt will be made.
+        # Failure to decode discards the messages up to and including the "\n", so that a clean start for the
+        # next message is guaranteed.
         logging.debug("Got raw data {!r} from {}".format(data, self.peername))
-        try:
-            message = json.loads(data.decode())
-            asyncio.ensure_future(self.chat.add_message(self, message))
-        except json.JSONDecodeError as e:
-            logging.warning("{}: JSONDecodeError: {}".format(self.peername, e))
-            pass
+        self.buffer.extend(data)
+        logging.debug("Buffer of {} contains {!r}".format(self.peername, self.buffer))
+        complete_message, separator, tail = self.buffer.partition(b"\n")
+        if separator:
+            self.buffer = tail
+            logging.debug("Trying to decode {!r} of {}".format(complete_message, self.peername))
+            try:
+                message = json.loads(complete_message.decode())
+                asyncio.ensure_future(self.chat.add_message(self, message))
+            except json.JSONDecodeError as e:
+                logging.warning("{}: JSONDecodeError: {}".format(self.peername, e))
+                pass
 
     def send_message(self, channel: str, peername: str, message: str):
         formatted = "[{}]{}: {}\n".format(channel, peername, message)
@@ -145,6 +170,12 @@ class ChatServerProtocol(asyncio.Protocol):
     def disconnect(self):
         logging.info("Disconnecting {}".format(self.peername))
         self.transport.close()
+
+    def set_name(self, new_name):
+        if not new_name:
+            new_name = self.peername
+        logging.info("{} changed name to {}".format(self.peername, new_name))
+        self.peername = new_name
 
 
 if __name__ == '__main__':
