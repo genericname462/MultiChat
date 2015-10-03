@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import socket
+import ssl
 import sys
 from typing import Union, ByteString, List
 
@@ -47,10 +48,13 @@ if __name__ == '__main__':
 
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.DEBUG)
 
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.load_verify_locations(cafile="ssl/cert.pem")
+
     loop = asyncio.get_event_loop()
     loop.set_debug(True)
 
-    coro = loop.create_connection(ChatClientProtocol, host, port, family=socket.AF_INET)
+    coro = loop.create_connection(ChatClientProtocol, host, port, family=socket.AF_INET, ssl=ssl_ctx)
     (client_transport, client_protocol) = loop.run_until_complete(coro)
 
     try:

@@ -189,7 +189,7 @@ if __name__ == '__main__':
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.DEBUG)
 
     # CLIENT_AUTH as in Clients will authenticate us
-    ssl_ctx = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
+    ssl_ctx = ssl.create_default_context(purpose=ssl.Purpose.CLIENT_AUTH)
     ssl_ctx.load_cert_chain(certfile="ssl/cert.pem", keyfile="ssl/key.pem")
     ssl_ctx.options |= ssl.OP_NO_SSLv2
     ssl_ctx.options |= ssl.OP_NO_SSLv3
