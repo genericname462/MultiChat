@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import socket
+import ssl
 from typing import Union, Set, List, Dict, Tuple, ByteString
 import sys
 
@@ -187,13 +188,27 @@ if __name__ == '__main__':
 
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.DEBUG)
 
+    # CLIENT_AUTH as in Clients will authenticate us
+    ssl_ctx = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
+    ssl_ctx.load_cert_chain(certfile="ssl/cert.pem", keyfile="ssl/key.pem")
+    ssl_ctx.options |= ssl.OP_NO_SSLv2
+    ssl_ctx.options |= ssl.OP_NO_SSLv3
+    ssl_ctx.options |= ssl.OP_NO_TLSv1
+    ssl_ctx.options |= ssl.OP_NO_TLSv1_1
+    ssl_ctx.options |= ssl.PROTOCOL_TLSv1_2
+
     loop = asyncio.get_event_loop()
     loop.set_debug(True)
 
     mychat = Chat()
     asyncio.ensure_future(mychat.run())
 
-    coro = loop.create_server(lambda: ChatServerProtocol(mychat), host, port, family=socket.AF_INET, reuse_address=True)
+    coro = loop.create_server(lambda: ChatServerProtocol(mychat),
+                              host, port,
+                              family=socket.AF_INET,
+                              reuse_address=True,
+                              ssl=ssl_ctx
+                              )
     server = loop.run_until_complete(coro)
 
     logging.info('Serving on {}'.format(server.sockets[0].getsockname()))

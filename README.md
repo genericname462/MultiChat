@@ -1,4 +1,4 @@
-Simple TCP chat with channels using some of the new asyncio features and the new type hints.
+Simple TCP/TLS chat with channels using some of the new asyncio features and the new type hints.
 
 ### Message format
 ##### Client to server:
@@ -18,4 +18,15 @@ Example:
 For debugging reasons it's a simple utf-8 string at the moment but reusing the upper format should be easy.
 ```python
 b'[channel]peername: message\n'
+```
+
+### Security
+To run your own server you need a private key and a certificate signing that key:
+```bash
+openssl req -x509 -nodes -newkey rsa:4096 -keyout ssl/key.pem -out ssl/cert.pem
+```
+
+Connecting to it netcat style:
+```bash
+openssl s_client -connect ip:port -CAfile ssl/cert.pem
 ```
