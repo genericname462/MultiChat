@@ -15,9 +15,13 @@ json.dumps([[channels], message]).encode() + b"\n"
 Example:
 `[["global"],"foo\nmultiline!"]` -> `b'[["global"], "foo\\nmultiline!"]\n'`
 ##### Server to client:
-For debugging reasons it's a simple utf-8 string at the moment but reusing the upper format should be easy.
+Analog to the c2s format, the server to client format is a 3-element list.
+```
+[channel, peername, message]
+```
+Again wraped with json, encoded in utf-8 and terminated by a newline:
 ```python
-b'[channel]peername: message\n'
+json.dumps([channel, peername, message]).encode() + b"\n"
 ```
 
 ### Security

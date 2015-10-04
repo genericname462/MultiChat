@@ -62,8 +62,8 @@ class ChatClient:
     async def remove_instance(self):
         self.instance = None
 
-    async def got_message(self, message: str):
-        print(message)
+    async def got_message(self, message: Tuple[str, str, str]):
+        print("[{}]{}:{}".format(message[0], message[1], message[2]))
 
 
 class ChatClientProtocol(asyncio.Protocol):
@@ -71,6 +71,7 @@ class ChatClientProtocol(asyncio.Protocol):
         self.client = client
         self.transport = ...  # type: Union[asyncio.BaseTransport, asyncio.ReadTransport, asyncio.WriteTransport]
         self.servername = ...
+        self.buffer = bytearray()
 
     def connection_made(self, transport: Union[asyncio.BaseTransport, asyncio.ReadTransport, asyncio.WriteTransport]):
         self.transport = transport
@@ -85,7 +86,18 @@ class ChatClientProtocol(asyncio.Protocol):
     def data_received(self, data: ByteString):
         # TODO: Handle incomplete transmissions
         logging.debug("Got raw data {!r} from {}".format(data, self.servername))
-        asyncio.ensure_future(self.client.got_message(data.decode()))
+        self.buffer.extend(data)
+        logging.debug("Buffer contains {!r}".format(self.buffer))
+        complete_message, separator, tail = self.buffer.partition(b"\n")
+        if separator:
+            self.buffer = tail
+            logging.debug("Trying to decode {!r} of {}".format(complete_message, self.servername))
+            try:
+                message = json.loads(complete_message.decode())
+                asyncio.ensure_future(self.client.got_message(message))
+            except json.JSONDecodeError as e:
+                logging.warning("{}: JSONDecodeError: {}".format(self.servername, e))
+                pass
 
     def send_raw(self, message):
         logging.debug("Send raw message {!r} to {}".format(message, self.servername))

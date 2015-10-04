@@ -48,10 +48,14 @@ class Chat:
         Registers an instance to the chat. Implicates a mandatory subscription to channel "global".
         """
         self.subscribe(instance, ["global"])
-        instance.send_raw("Hello {}\n{}".format(
-            instance.peername,
-            welcome_message.format(self.channels.keys(), ["%name", "%join", "%leave"]))
-        )
+        instance.send_message("info",
+                              "server",
+                              "Hello {}\n{}".format(
+                                  instance.peername,
+                                  welcome_message.format(self.channels.keys(),
+                                                         ["%name", "%join", "%leave"]
+                                                         )
+                              ))
         logging.info("Registered {} to chat".format(instance.peername))
 
     def deregister(self, instance: "ChatServerProtocol"):
@@ -88,7 +92,9 @@ class Chat:
             try:
                 self.channels[channel].add(instance)
                 logging.debug("{} joined channel {}".format(instance.peername, channel))
+                instance.send_message("info", "server", "Joined {}".format(channel))
             except KeyError:
+                instance.send_message("info", "server", "Channel {} does not exist".format(channel))
                 pass
 
     def unsubscribe(self, instance: "ChatServerProtocol", channel_list: List[str]):
@@ -98,14 +104,17 @@ class Chat:
         for channel in channel_list:
             try:
                 self.channels[channel].remove(instance)
+                logging.debug("{} left channel {}".format(instance.peername, channel))
+                instance.send_message("info", "server", "Left {}".format(channel))
             except KeyError:
+                instance.send_message("info", "server", "Channel {} does not exist".format(channel))
                 pass
 
     def kick(self, instance: "ChatServerProtocol"):
         """
         Similar to deregister() except that the TCP connection gets closed.
         """
-        instance.send_raw("Git gud!")
+        instance.send_message("info", "server", "Kicked. Git Gud")
         self.deregister(instance)
         instance.disconnect()
 
@@ -160,9 +169,10 @@ class ChatServerProtocol(asyncio.Protocol):
                 pass
 
     def send_message(self, channel: str, peername: str, message: str):
-        formatted = "[{}]{}: {}\n".format(channel, peername, message)
+        #formatted = "[{}]{}: {}\n".format(channel, peername, message)
+        formatted = json.dumps([channel, peername, message]).encode() + b"\n"
         logging.debug("Send message {!r} to {}".format(formatted, self.peername))
-        self.transport.write(formatted.encode())
+        self.transport.write(formatted)
 
     def send_raw(self, message):
         logging.debug("Send raw message {!r} to {}".format(message, self.peername))
