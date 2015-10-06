@@ -169,7 +169,6 @@ class ChatServerProtocol(asyncio.Protocol):
                 pass
 
     def send_message(self, channel: str, peername: str, message: str):
-        #formatted = "[{}]{}: {}\n".format(channel, peername, message)
         formatted = json.dumps([channel, peername, message]).encode() + b"\n"
         logging.debug("Send message {!r} to {}".format(formatted, self.peername))
         self.transport.write(formatted)
