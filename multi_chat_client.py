@@ -7,7 +7,10 @@ import socket
 import ssl
 import sys
 import threading
+from ast import literal_eval
 from typing import Union, ByteString, List, Tuple
+
+import bson
 
 
 def pack_message(channels: List[str], message: str) -> ByteString:
@@ -103,8 +106,10 @@ class ChatClientProtocol(asyncio.Protocol):
                 break
 
     def send_raw(self, message):
+        message_dict = literal_eval(message)
+        message_bson = bson.dumps(message_dict)
         logging.debug("Send raw message {!r} to {}".format(message, self.servername))
-        self.transport.write(message.encode())
+        self.transport.write(message_bson)
 
     def disconnect(self):
         logging.info("Disconnecting from {}".format(self.servername))

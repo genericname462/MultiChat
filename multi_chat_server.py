@@ -8,6 +8,11 @@ import ssl
 from typing import Union, Set, List, Dict, Tuple, ByteString
 import sys
 
+from struct import unpack
+
+import bson
+import time
+
 welcome_message = "Expected format: utf-8_encoding( json_encoding( [List_of_channels, message] ) + \"\\n\" )\n" + \
     "Example: b\'[[\"global\", \"foo\"], \"Hello, world\\\\nMultiline!\"]\\n\'\n" + \
     "Active channel for now: {}\n" + \
@@ -28,17 +33,17 @@ class Chat:
             (instance, message) = await self.queue.get()
             await self.handle_message(instance, message)
 
-    async def handle_message(self, instance: "ChatServerProtocol", message: Tuple[List[str], str]):
-        if message[1].startswith("%"):
-            self.handle_command(instance, message[1])
+    async def handle_message(self, instance: "ChatServerProtocol", message: Dict):
+        if message["message"].startswith("%"):
+            self.handle_command(instance, message["message"])
             return
-        for channel in message[0]:
+        for channel in message["channels"]:
             if channel in self.channels:
                 for subscriber in self.channels[channel]:
-                    subscriber.send_message(channel, instance.peername, message[1])
+                    subscriber.send_message(channel, instance.peername, message["message"])
         pass
 
-    async def add_message(self, instance: "ChatServerProtocol", message: Tuple[List[str], str]):
+    async def add_message(self, instance: "ChatServerProtocol", message: Dict):
         """
         Adds a message from instance to the queue.
         """
@@ -160,22 +165,39 @@ class ChatServerProtocol(asyncio.Protocol):
         # The incoming stream will get split at the first occurrence of a "\n" and a decoding attempt will be made.
         # Failure to decode discards the messages up to and including the "\n", so that a clean start for the
         # next message is guaranteed.
-        logging.debug("Got raw data {!r} from {}".format(data, self.peername))
+        logging.debug("Got raw data[{}] {!r} from {}".format(len(data), data, self.peername))
         self.buffer.extend(data)
         logging.debug("Buffer of {} contains {!r}".format(self.peername, self.buffer))
-        while True:
-            complete_message, separator, tail = self.buffer.partition(b"\n")
-            if separator:
-                self.buffer = tail
-                logging.debug("Trying to decode {!r} of {}".format(complete_message, self.peername))
+
+        # TODO: maybe use memoryview to prevent useless copies on every slicing operation
+        if len(self.buffer) >= 4:
+            bson_expected_len = unpack("<i", self.buffer[:4])[0]
+            if len(self.buffer) >= bson_expected_len:
+                bson_obj = self.buffer[:bson_expected_len]  # contains the (hopefully) valid BSON object
+                self.buffer = self.buffer[bson_expected_len:]  # removes the object from the buffer
                 try:
-                    message = json.loads(complete_message.decode())
+                    t = time.clock()
+                    message = bson.loads(bson_obj)
+                    delta = time.clock() - t
+                    logging.debug("Decoded {} from {}, took {} s".format(message, self.peername, delta))
                     asyncio.ensure_future(self.chat.add_message(self, message))
-                except json.JSONDecodeError as e:
-                    logging.warning("{}: JSONDecodeError: {}".format(self.peername, e))
-                    break
-            else:
-                break
+                except IndexError as e:
+                    logging.warning("{}: BSONDecodeError: {}".format(self.peername, e))
+                    pass
+
+        # while True:
+        #     complete_message, separator, tail = self.buffer.partition(b"\n")
+        #     if separator:
+        #         self.buffer = tail
+        #         logging.debug("Trying to decode {!r} of {}".format(complete_message, self.peername))
+        #         try:
+        #             message = json.loads(complete_message.decode())
+        #             asyncio.ensure_future(self.chat.add_message(self, message))
+        #         except json.JSONDecodeError as e:
+        #             logging.warning("{}: JSONDecodeError: {}".format(self.peername, e))
+        #             break
+        #     else:
+        #         break
 
     def send_message(self, channel: str, peername: str, message: str):
         formatted = json.dumps([channel, peername, message]).encode() + b"\n"

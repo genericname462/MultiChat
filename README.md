@@ -34,3 +34,21 @@ Connecting to it netcat style:
 ```bash
 openssl s_client -connect ip:port -CAfile ssl/cert.pem
 ```
+
+### Switch to BSON
+##### Format
+Client to server:
+```
+{
+    "channels": List[str],
+    "message": str
+}
+```
+Server to client:
+```
+{
+    "channels": List[str],
+    "sendername": str,
+    "message": str
+}
+```
