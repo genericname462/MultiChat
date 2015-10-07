@@ -88,16 +88,19 @@ class ChatClientProtocol(asyncio.Protocol):
         logging.debug("Got raw data {!r} from {}".format(data, self.servername))
         self.buffer.extend(data)
         logging.debug("Buffer contains {!r}".format(self.buffer))
-        complete_message, separator, tail = self.buffer.partition(b"\n")
-        if separator:
-            self.buffer = tail
-            logging.debug("Trying to decode {!r} of {}".format(complete_message, self.servername))
-            try:
-                message = json.loads(complete_message.decode())
-                asyncio.ensure_future(self.client.got_message(message))
-            except json.JSONDecodeError as e:
-                logging.warning("{}: JSONDecodeError: {}".format(self.servername, e))
-                pass
+        while True:
+            complete_message, separator, tail = self.buffer.partition(b"\n")
+            if separator:
+                self.buffer = tail
+                logging.debug("Trying to decode {!r} of {}".format(complete_message, self.servername))
+                try:
+                    message = json.loads(complete_message.decode())
+                    asyncio.ensure_future(self.client.got_message(message))
+                except json.JSONDecodeError as e:
+                    logging.warning("{}: JSONDecodeError: {}".format(self.servername, e))
+                    break
+            else:
+                break
 
     def send_raw(self, message):
         logging.debug("Send raw message {!r} to {}".format(message, self.servername))
@@ -126,7 +129,11 @@ if __name__ == '__main__':
     myclient = ChatClient()
     asyncio.ensure_future(myclient.run())
 
-    coro = loop.create_connection(lambda: ChatClientProtocol(myclient), host, port, family=socket.AF_INET, ssl=ssl_ctx)
+    coro = loop.create_connection(lambda: ChatClientProtocol(myclient),
+                                  host, port,
+                                  family=socket.AF_INET,
+                                  ssl=ssl_ctx
+                                  )
     (client_transport, client_protocol) = loop.run_until_complete(coro)
 
     try:

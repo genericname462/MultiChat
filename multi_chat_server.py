@@ -32,7 +32,7 @@ class Chat:
             self.handle_command(instance, message[1])
             return
         for channel in message[0]:
-            if channel in self.channels.keys():
+            if channel in self.channels:
                 for subscriber in self.channels[channel]:
                     subscriber.send_message(channel, instance.peername, message[1])
         pass
@@ -110,6 +110,10 @@ class Chat:
                 instance.send_message("info", "server", "Channel {} does not exist".format(channel))
                 pass
 
+    def create_channel(self, channel_name: str):
+        if channel_name not in self.channels:
+            self.channels[channel_name] = set()
+
     def kick(self, instance: "ChatServerProtocol"):
         """
         Similar to deregister() except that the TCP connection gets closed.
@@ -157,16 +161,19 @@ class ChatServerProtocol(asyncio.Protocol):
         logging.debug("Got raw data {!r} from {}".format(data, self.peername))
         self.buffer.extend(data)
         logging.debug("Buffer of {} contains {!r}".format(self.peername, self.buffer))
-        complete_message, separator, tail = self.buffer.partition(b"\n")
-        if separator:
-            self.buffer = tail
-            logging.debug("Trying to decode {!r} of {}".format(complete_message, self.peername))
-            try:
-                message = json.loads(complete_message.decode())
-                asyncio.ensure_future(self.chat.add_message(self, message))
-            except json.JSONDecodeError as e:
-                logging.warning("{}: JSONDecodeError: {}".format(self.peername, e))
-                pass
+        while True:
+            complete_message, separator, tail = self.buffer.partition(b"\n")
+            if separator:
+                self.buffer = tail
+                logging.debug("Trying to decode {!r} of {}".format(complete_message, self.peername))
+                try:
+                    message = json.loads(complete_message.decode())
+                    asyncio.ensure_future(self.chat.add_message(self, message))
+                except json.JSONDecodeError as e:
+                    logging.warning("{}: JSONDecodeError: {}".format(self.peername, e))
+                    break
+            else:
+                break
 
     def send_message(self, channel: str, peername: str, message: str):
         formatted = json.dumps([channel, peername, message]).encode() + b"\n"
@@ -216,6 +223,7 @@ if __name__ == '__main__':
                               host, port,
                               family=socket.AF_INET,
                               reuse_address=True,
+                              backlog=1024,
                               ssl=ssl_ctx
                               )
     server = loop.run_until_complete(coro)
