@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import os
 import socket
 import ssl
 from typing import Union, Set, List, Dict, Tuple, ByteString
@@ -53,7 +54,7 @@ class Chat:
                               "Hello {}\n{}".format(
                                   instance.peername,
                                   welcome_message.format(self.channels.keys(),
-                                                         ["%name", "%join", "%leave"]
+                                                         ["%name", "%join", "%leave", "%new"]
                                                          )
                               ))
         logging.info("Registered {} to chat".format(instance.peername))
@@ -75,7 +76,8 @@ class Chat:
         commands = {
             "%name": lambda x: instance.set_name(x),
             "%join": lambda x: self.subscribe(instance, x.split()),
-            "%leave": lambda x: self.unsubscribe(instance, x.split())
+            "%leave": lambda x: self.unsubscribe(instance, x.split()),
+            "%new": lambda x: self.create_channel(x)
         }
         try:
             op_code, sep, parameter = command.partition(" ")
@@ -212,6 +214,10 @@ if __name__ == '__main__':
     ssl_ctx.options |= ssl.OP_NO_TLSv1
     ssl_ctx.options |= ssl.OP_NO_TLSv1_1
     ssl_ctx.options |= ssl.PROTOCOL_TLSv1_2
+
+    if os.name == 'nt':
+        alt_loop = asyncio.ProactorEventLoop()
+        asyncio.set_event_loop(alt_loop)
 
     loop = asyncio.get_event_loop()
     loop.set_debug(True)
