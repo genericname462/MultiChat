@@ -1,6 +1,5 @@
 # coding=utf-8
 import asyncio
-import json
 import logging
 import os
 import socket
@@ -13,8 +12,8 @@ from struct import unpack
 import bson
 import time
 
-welcome_message = "Expected format: bson_encoding( {{\"channels\":[List_of_channels], \"message\": message}} )\n" + \
-    "Example: bson.dumps({{\"channels\": [\"global\"]),\"message\": \"foo\"\}}\n" + \
+welcome_message = "Expected format: bson_encoding( {{\"channels\": [List_of_channels], \"message\": message}} )\n" + \
+    "Example: bson.dumps({{\"channels\": [\"global\"]),\"message\": \"foo\"}})\n" + \
     "Active channels for now: {}\n" + \
     "Available commands: {}\n"
 
@@ -113,6 +112,9 @@ class Chat:
                 self.channels[channel].remove(instance)
                 logging.debug("{} left channel {}".format(instance.peername, channel))
                 instance.send_message("info", "server", "Left {}".format(channel))
+                if len(self.channels[channel]) == 0:
+                    self.delete_channel(channel)
+
             except KeyError:
                 instance.send_message("info", "server", "Channel {} does not exist".format(channel))
                 pass
@@ -120,6 +122,18 @@ class Chat:
     def create_channel(self, channel_name: str):
         if channel_name not in self.channels:
             self.channels[channel_name] = set()
+            logging.debug("Created channel {}".format(channel_name))
+        else:
+            logging.debug("Creating channel {} failed. Channel does already exist".format(channel_name))
+
+    def delete_channel(self, channel_name: str):
+        if channel_name in self.channels and channel_name != "global":
+            for subscriber in self.channels[channel_name]:
+                subscriber.disconnect()
+            del self.channels[channel_name]
+            logging.debug("Deleted channel {}".format(channel_name))
+        else:
+            logging.info("Deleting channel {} failed. Channel does not exist".format(channel_name))
 
     def kick(self, instance: "ChatServerProtocol"):
         """
@@ -135,6 +149,7 @@ class Chat:
         """
         logging.warning("Chat shutdown")
         for subscriber in self.channels["global"]:
+            subscriber.send_message("info", "server", "Shutting down. Bye")
             subscriber.disconnect()
         for channel in self.channels.values():
             channel.clear()
@@ -160,13 +175,15 @@ class ChatServerProtocol(asyncio.Protocol):
         self.transport.close()
 
     def data_received(self, data: ByteString):
-        # TODO: Fix comment
-        # Expected format: utf-8( json( [List_of_channels, message] ) + "\n" )
-        # Example: b'[["global", "foo"], "Hello, world\\nMultiline!"]\n'
-        # Meaning: Send "Hello, world\nMultiline!" to channel "global" and "foo", sender gets identified by his socket.
-        # The incoming stream will get split at the first occurrence of a "\n" and a decoding attempt will be made.
-        # Failure to decode discards the messages up to and including the "\n", so that a clean start for the
-        # next message is guaranteed.
+        # Expected format: bson_encoding( {"channels": [List_of_channels], "message": message} )
+        # Example: bson.dumps({"channels": ["global"]), "message": "Hello, world\nMultiline!"})
+        # Meaning: Send "Hello, world\nMultiline!" to channel "global", the sender gets identified by his socket.
+        # The first 4 byte specify the length of BSON document and will be used as a splitting mark.
+        # One attempt is made to decode the resulting object. Failure to decode discards the object.
+        # This sadly means if we ever loose sync to a client (can not happen incidentally with TCP/TLS)
+        # there is no way to decode further transmissions.
+        # TODO: Examine further handling in this case, maybe drop connection since it's either an incompatible encoding
+        # or a malicious attempt.
         logging.debug("Got raw data[{}] {!r} from {}".format(len(data), data, self.peername))
         self.buffer.extend(data)
         logging.debug("Buffer of {} contains {!r}".format(self.peername, self.buffer))
@@ -188,7 +205,6 @@ class ChatServerProtocol(asyncio.Protocol):
                     pass
 
     def send_message(self, channel: str, peername: str, message: str):
-        # formatted = json.dumps([channel, peername, message]).encode() + b"\n"
         formatted = bson.dumps({"channel": channel, "sendername": peername, "message": message})
         logging.debug("Send message {!r} to {}".format(formatted, self.peername))
         self.transport.write(formatted)
