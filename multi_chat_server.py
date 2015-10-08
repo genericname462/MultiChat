@@ -13,9 +13,9 @@ from struct import unpack
 import bson
 import time
 
-welcome_message = "Expected format: utf-8_encoding( json_encoding( [List_of_channels, message] ) + \"\\n\" )\n" + \
-    "Example: b\'[[\"global\", \"foo\"], \"Hello, world\\\\nMultiline!\"]\\n\'\n" + \
-    "Active channel for now: {}\n" + \
+welcome_message = "Expected format: bson_encoding( {{\"channels\":[List_of_channels], \"message\": message}} )\n" + \
+    "Example: bson.dumps({{\"channels\": [\"global\"]),\"message\": \"foo\"\}}\n" + \
+    "Active channels for now: {}\n" + \
     "Available commands: {}\n"
 
 
@@ -141,6 +141,7 @@ class Chat:
 
 
 class ChatServerProtocol(asyncio.Protocol):
+    # TODO: find better name for message
     def __init__(self, chat: Chat):
         self.chat = chat
         self.transport = ...  # type: Union[asyncio.BaseTransport, asyncio.ReadTransport, asyncio.WriteTransport]
@@ -159,6 +160,7 @@ class ChatServerProtocol(asyncio.Protocol):
         self.transport.close()
 
     def data_received(self, data: ByteString):
+        # TODO: Fix comment
         # Expected format: utf-8( json( [List_of_channels, message] ) + "\n" )
         # Example: b'[["global", "foo"], "Hello, world\\nMultiline!"]\n'
         # Meaning: Send "Hello, world\nMultiline!" to channel "global" and "foo", sender gets identified by his socket.
@@ -174,7 +176,7 @@ class ChatServerProtocol(asyncio.Protocol):
             bson_expected_len = unpack("<i", self.buffer[:4])[0]
             if len(self.buffer) >= bson_expected_len:
                 bson_obj = self.buffer[:bson_expected_len]  # contains the (hopefully) valid BSON object
-                self.buffer = self.buffer[bson_expected_len:]  # removes the object from the buffer
+                self.buffer = self.buffer[bson_expected_len:]  # shifts the buffer to the start of the next object
                 try:
                     t = time.clock()
                     message = bson.loads(bson_obj)
@@ -185,22 +187,9 @@ class ChatServerProtocol(asyncio.Protocol):
                     logging.warning("{}: BSONDecodeError: {}".format(self.peername, e))
                     pass
 
-        # while True:
-        #     complete_message, separator, tail = self.buffer.partition(b"\n")
-        #     if separator:
-        #         self.buffer = tail
-        #         logging.debug("Trying to decode {!r} of {}".format(complete_message, self.peername))
-        #         try:
-        #             message = json.loads(complete_message.decode())
-        #             asyncio.ensure_future(self.chat.add_message(self, message))
-        #         except json.JSONDecodeError as e:
-        #             logging.warning("{}: JSONDecodeError: {}".format(self.peername, e))
-        #             break
-        #     else:
-        #         break
-
     def send_message(self, channel: str, peername: str, message: str):
-        formatted = json.dumps([channel, peername, message]).encode() + b"\n"
+        # formatted = json.dumps([channel, peername, message]).encode() + b"\n"
+        formatted = bson.dumps({"channel": channel, "sendername": peername, "message": message})
         logging.debug("Send message {!r} to {}".format(formatted, self.peername))
         self.transport.write(formatted)
 

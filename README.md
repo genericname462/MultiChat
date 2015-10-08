@@ -47,7 +47,7 @@ Client to server:
 Server to client:
 ```
 {
-    "channels": List[str],
+    "channel": str,
     "sendername": str,
     "message": str
 }

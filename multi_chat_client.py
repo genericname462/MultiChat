@@ -1,6 +1,5 @@
 # coding=utf-8
 import asyncio
-import json
 import logging
 import queue
 import socket
@@ -8,18 +7,11 @@ import ssl
 import sys
 import threading
 from ast import literal_eval
-from typing import Union, ByteString, List, Tuple
-
+from typing import Union, ByteString, List, Tuple, Dict
 import bson
+from struct import unpack
 
-
-def pack_message(channels: List[str], message: str) -> ByteString:
-    try:
-        formatted = json.dumps([channels, message]).encode() + b"\n"
-        return formatted
-    except TypeError as e:
-        logging.error("Error encoding message {}".format(channels, message))
-        raise e
+import time
 
 
 class ChatClient:
@@ -65,8 +57,8 @@ class ChatClient:
     async def remove_instance(self):
         self.instance = None
 
-    async def got_message(self, message: Tuple[str, str, str]):
-        print("[{}]{}:{}".format(message[0], message[1], message[2]))
+    async def got_message(self, message: Dict):
+        print("[{}]{}:{}".format(message["channel"], message["sendername"], message["message"]))
 
 
 class ChatClientProtocol(asyncio.Protocol):
@@ -91,19 +83,26 @@ class ChatClientProtocol(asyncio.Protocol):
         logging.debug("Got raw data {!r} from {}".format(data, self.servername))
         self.buffer.extend(data)
         logging.debug("Buffer contains {!r}".format(self.buffer))
-        while True:
-            complete_message, separator, tail = self.buffer.partition(b"\n")
-            if separator:
-                self.buffer = tail
-                logging.debug("Trying to decode {!r} of {}".format(complete_message, self.servername))
+
+        if len(self.buffer) >= 4:
+            bson_expected_len = unpack("<i", self.buffer[:4])[0]
+            if len(self.buffer) >= bson_expected_len:
+                bson_obj = self.buffer[:bson_expected_len]  # contains the (hopefully) valid BSON object
+                self.buffer = self.buffer[bson_expected_len:]  # shifts the buffer to the start of the next object
                 try:
-                    message = json.loads(complete_message.decode())
+                    t = time.clock()
+                    message = bson.loads(bson_obj)
+                    delta = time.clock() - t
+                    logging.debug("Decoded {} from {}, took {} s".format(message, self.servername, delta))
                     asyncio.ensure_future(self.client.got_message(message))
-                except json.JSONDecodeError as e:
-                    logging.warning("{}: JSONDecodeError: {}".format(self.servername, e))
-                    break
-            else:
-                break
+                except IndexError as e:
+                    logging.warning("{}: BSONDecodeError: {}".format(self.servername, e))
+                    pass
+
+    def send_message(self, channel: str, message: str):
+        formatted = bson.dumps({"channel": channel, "message": message})
+        logging.debug("Send message {!r} to {}".format(formatted, self.servername))
+        self.transport.write(formatted)
 
     def send_raw(self, message):
         message_dict = literal_eval(message)
