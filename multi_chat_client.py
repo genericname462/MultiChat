@@ -126,6 +126,7 @@ if __name__ == '__main__':
 
     ssl_ctx = ssl.create_default_context()
     ssl_ctx.load_verify_locations(cafile="ssl/cert.pem")
+    ssl_ctx.set_ciphers("ECDHE-RSA-AES256-GCM-SHA384")
 
     loop = asyncio.get_event_loop()
     loop.set_debug(True)

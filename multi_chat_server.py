@@ -176,14 +176,14 @@ class ChatServerProtocol(asyncio.Protocol):
 
     def data_received(self, data: ByteString):
         # Expected format: bson_encoding( {"channels": [List_of_channels], "message": message} )
-        # Example: bson.dumps({"channels": ["global"]), "message": "Hello, world\nMultiline!"})
+        # Example: bson.dumps({"channels": ["global"], "message": "Hello, world\nMultiline!"})
         # Meaning: Send "Hello, world\nMultiline!" to channel "global", the sender gets identified by his socket.
         # The first 4 byte specify the length of BSON document and will be used as a splitting mark.
         # One attempt is made to decode the resulting object. Failure to decode discards the object.
         # This sadly means if we ever loose sync to a client (can not happen incidentally with TCP/TLS)
         # there is no way to decode further transmissions.
-        # TODO: Examine further handling in this case, maybe drop connection since it's either an incompatible encoding
-        # or a malicious attempt.
+        # TODO: Examine further handling in this case, maybe drop the connection since it's either an incompatible
+        # encoding or a malicious attempt.
         logging.debug("Got raw data[{}] {!r} from {}".format(len(data), data, self.peername))
         self.buffer.extend(data)
         logging.debug("Buffer of {} contains {!r}".format(self.peername, self.buffer))
@@ -236,6 +236,8 @@ if __name__ == '__main__':
     # CLIENT_AUTH as in Clients will authenticate us
     ssl_ctx = ssl.create_default_context(purpose=ssl.Purpose.CLIENT_AUTH)
     ssl_ctx.load_cert_chain(certfile="ssl/cert.pem", keyfile="ssl/key.pem")
+    ssl_ctx.set_ciphers("ECDHE-RSA-AES256-GCM-SHA384")
+    ssl_ctx.options |= ssl.PROTOCOL_SSLv23
     ssl_ctx.options |= ssl.OP_NO_SSLv2
     ssl_ctx.options |= ssl.OP_NO_SSLv3
     ssl_ctx.options |= ssl.OP_NO_TLSv1
